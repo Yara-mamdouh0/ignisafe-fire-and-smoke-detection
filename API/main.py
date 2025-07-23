@@ -29,13 +29,14 @@ Output_Image = "last_detected_frame.jpg"
 
 camera_url_store = {"url": None}
 stop_flag = {"stop": False, "error": None}
-shared_camera_frames = {"frame": None, "processed_frame": None}
-
+shared_camera_frames = {"frame": None, "processed_frame": None, "detection_enabled": {"run": False}} # to enable detection
 live_detections = []
 
-TEMPERATURE_THRESHOLD = 10
-GAS_THRESHOLD = 10
+TEMPERATURE_THRESHOLD = 20 # need change 
+GAS_THRESHOLD = 60 # also
 
+
+# for avoid conflict
 stop_flag_lock = threading.Lock()
 camera_running = False
 camera_running_lock = threading.Lock()
@@ -157,33 +158,34 @@ def start_camera_thread(camera_url):
         cap.release()
         on_camera_stop()
 
+# apply when threshold 
     def frame_detector(shared, source_name, stop_flag):
+        detection_enabled = shared.get("detection_enabled", {"run": False})
         while True:
             with stop_flag_lock:
                 if stop_flag["stop"]:
                     break
             frame = shared.get('frame')
             if frame is not None:
-                results = model(frame)
                 processed_frame = frame.copy()
-                if len(results) > 0 and len(results[0].boxes) > 0:
-                    for result in results:
-                        for box in result.boxes:
-                            x1, y1, x2, y2 = map(int, box.xyxy.tolist()[0])
-                            conf = box.conf.tolist()[0]
-                            class_id = int(box.cls.tolist()[0])
-                            class_label = CLASS_LABELS.get(class_id, "unknown")
-                            color = (0, 0, 255) if class_label == "fire" else (255, 165, 0)
-                            cv2.rectangle(processed_frame, (x1, y1), (x2, y2), color, 2)
-                            cv2.putText(processed_frame, f"{class_label} {conf:.2f}", (x1, y1 - 10),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-
+                if detection_enabled["run"]:
+                    results = model(frame) # apply model  on shared
+                    if len(results) > 0 and len(results[0].boxes) > 0:
+                        for result in results:
+                            for box in result.boxes:
+                                x1, y1, x2, y2 = map(int, box.xyxy.tolist()[0])
+                                conf = box.conf.tolist()[0]
+                                class_id = int(box.cls.tolist()[0])
+                                class_label = CLASS_LABELS.get(class_id, "unknown")
+                                color = (0, 0, 255) if class_label == "fire" else (255, 165, 0)
+                                cv2.rectangle(processed_frame, (x1, y1), (x2, y2), color, 2)
+                                cv2.putText(processed_frame, f"{class_label} {conf:.2f}", (x1, y1 - 10),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                        detections = extract_detections(results, source_name)
+                        save_detection_to_json(detections)
+                        save_last_detected_frame(frame, results)
+                        live_detections.extend(detections)
                 shared['processed_frame'] = processed_frame
-                detections = extract_detections(results, source_name)
-                save_detection_to_json(detections)
-                save_last_detected_frame(frame, results)
-                live_detections.extend(detections)
-
                 cv2.imshow("Live Detection", processed_frame)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     with stop_flag_lock:
@@ -194,7 +196,7 @@ def start_camera_thread(camera_url):
     cv2.destroyAllWindows()
 
     global shared_camera_frames
-    shared_camera_frames = {"frame": None, "processed_frame": None}
+    shared_camera_frames = {"frame": None, "processed_frame": None, "detection_enabled": {"run": False}}
     source_name = f"ip_camera_{camera_url.split('/')[-1]}"
     with stop_flag_lock:
         stop_flag.update({"stop": False, "error": None})
@@ -208,7 +210,8 @@ class CameraUrlRequest(BaseModel):
 @app.post("/set-camera-url/")
 def set_camera_url(data: CameraUrlRequest):
     camera_url_store["url"] = data.camera_url
-    return {"message": "Camera URL saved. Waiting for sensor data to trigger camera.", "camera_url": data.camera_url}
+    threading.Thread(target=start_camera_thread, args=(data.camera_url,), daemon=True).start()
+    return {"message": "Camera URL saved and camera stream started.", "camera_url": data.camera_url}
 
 @app.get("/video-stream/")
 def video_stream():
@@ -251,9 +254,6 @@ def get_camera_detections():
     return JSONResponse(content=live_detections)
 
 def process_sensor_data(data):
-    temperature_exceeded = False
-    gas_exceeded = False
-
     try:
         temperature = data.get("DHT11", {}).get("Temperature")
         humidity = data.get("DHT11", {}).get("Humidity")
@@ -270,24 +270,14 @@ def process_sensor_data(data):
         }
         save_sensor_data(sensor_entry)
 
-        if temperature is not None and temperature >= TEMPERATURE_THRESHOLD:
-            print(f"[ALERT] Temperature threshold exceeded: {temperature}")
-            temperature_exceeded = True
-
-        if gas is not None and gas >= GAS_THRESHOLD:
-            print(f"[ALERT] Gas level threshold exceeded: {gas}")
-            gas_exceeded = True
-
-        if temperature_exceeded or gas_exceeded or flame_status == 1:
-            camera_url = camera_url_store.get("url")
-            if camera_url:
-                print("[INFO] Starting camera stream due to sensor alert...")
-                threading.Thread(target=start_camera_thread, args=(camera_url,), daemon=True).start()
+        if ((temperature is not None and temperature >= TEMPERATURE_THRESHOLD) or
+            (gas is not None and gas >= GAS_THRESHOLD) or
+            flame_status == 1):
+            print("[INFO] Threshold exceeded. Enabling model detection...")
+            shared_camera_frames.get("detection_enabled", {})["run"] = True
 
     except Exception as e:
         print("[ERROR] Failed to process sensor data:", e)
-
-
 
 @app.post("/predict/")
 async def predict(file: UploadFile = File(...)):
@@ -332,8 +322,6 @@ async def predict(file: UploadFile = File(...)):
 
     return JSONResponse(content=detections if detections else [generate_no_detection_entry(file.filename)])
 
-
-
 def firebase_polling():
     while True:
         try:
@@ -367,4 +355,5 @@ if not firebase_admin._apps:
         "databaseURL": r"https://fire-5a45f-default-rtdb.firebaseio.com/"
     })
 
-threading.Thread(target=firebase_listener, daemon=True).start()     #thisssssssssssssss
+threading.Thread(target=firebase_listener, daemon=True).start()
+#done
