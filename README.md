@@ -7,7 +7,7 @@ The goal is to enable automatic detection that can help in taking fast action an
 - I experimented with multiple model versions to evaluate and compare their performance.
 - Several techniques were tested to improve accuracy and reliability.
 - All the results, observations, and comparisons are documented in the attached PDF file.
-- ## Notebook here [ Google Colab notebook-fire and smoke Detection](https://colab.research.google.com/drive/1orHAleKdz2HGamDQeyl6gKzknB3tADHn?usp=sharing)
+- ## Notebook here [ Google Colab notebook-fire and smoke Detection](https://colab.research.google.com/drive/16-CoRI0rejNofdPGy0O92zFyHPKD6ugs?usp=sharing)
 
 ## AI-Docs
 
