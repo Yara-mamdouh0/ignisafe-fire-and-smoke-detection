@@ -65,4 +65,6 @@ The last detection frame is saved as last_detected_frame.jpg
 
 
 ### Video Demo
-[*Fire & Smoke Detection Demo Video*](https://drive.google.com/file/d/1zXrvtEXBHXu9cwNwGDzt7nQhF6tF2L5q/view?usp=sharing)
+[*Fire & Smoke Detection Demo1 Video*](https://drive.google.com/file/d/1eQGf-hCyr8w3puLOaXp6Yb-ye4e9OwFO/view?usp=sharing)
+
+[*Fire & Smoke Detection Demo2 Video*](https://drive.google.com/file/d/1zXrvtEXBHXu9cwNwGDzt7nQhF6tF2L5q/view?usp=sharing)
